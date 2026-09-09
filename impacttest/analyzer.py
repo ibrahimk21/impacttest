@@ -18,6 +18,11 @@ class _ImportVisitor(ast.NodeVisitor):
             self.imports.append(RawImport(module=alias.name, level=0))
         self.generic_visit(node)
 
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        names = tuple(alias.name for alias in node.names)
+        self.imports.append(RawImport(module=node.module, level=node.level, names=names))
+        self.generic_visit(node)
+
 
 def extract_imports(source: str) -> tuple[list[RawImport], bool]:
     """Parse ``source`` and return (raw imports, uncertain).
