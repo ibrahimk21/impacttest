@@ -5,6 +5,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+@dataclass(frozen=True)
+class RawImport:
+    """One import statement as extracted from source, before resolution.
+
+    ``module`` is the dotted name written in the statement (None only for
+    a bare ``from . import x``, where nothing follows the dots). ``level``
+    is the relative-import dot count: 0 for an absolute import. ``names``
+    are the imported names, or ("*",) for a star import -- not used for
+    module-level dependency resolution, kept for explainability.
+    """
+
+    module: str | None
+    level: int
+    names: tuple[str, ...] = ()
+
+
 @dataclass
 class Module:
     """A single Python file discovered in the repository."""
@@ -12,7 +28,7 @@ class Module:
     path: Path
     name: str
     is_test: bool = False
-    imports: list[str] = field(default_factory=list)
+    imports: list[RawImport] = field(default_factory=list)
     uncertain: bool = False
 
 
