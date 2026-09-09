@@ -24,6 +24,13 @@ class _ImportVisitor(ast.NodeVisitor):
     ImportFrom path -- exactly the "treat as a dependency on the whole
     module" behavior spec §24 asks for. Module-level granularity means
     we never needed to know which specific names were imported.
+
+    Imports guarded by `if TYPE_CHECKING:` (or any other conditional)
+    are included too, for the same reason nested imports are: If is
+    just another node type we don't override, so generic_visit walks
+    into its body regardless of the condition. Including a type-only
+    import can only cause an unnecessary test run, never a missed one,
+    so there is no reason to filter it out (spec §24).
     """
 
     def __init__(self) -> None:
