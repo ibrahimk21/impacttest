@@ -47,6 +47,37 @@ class _ImportVisitor(ast.NodeVisitor):
         self.imports.append(RawImport(module=node.module, level=node.level, names=names))
         self.generic_visit(node)
 
+    def visit_Call(self, node: ast.Call) -> None:
+        if _is_dynamic_import_call(node):
+            self.uncertain = True
+        self.generic_visit(node)
+
+
+_DYNAMIC_IMPORT_NAMES = {"__import__", "exec", "eval"}
+
+
+def _is_dynamic_import_call(node: ast.Call) -> bool:
+    """True for calls to importlib.import_module, __import__, exec, or
+    eval -- the constructs spec §15 calls out as making static analysis
+    unreliable, since what they actually do can depend on a runtime
+    value we cannot see.
+
+    Not exhaustive by design (e.g. `from importlib import import_module`
+    then calling it bare isn't caught here). The conservative fallback
+    in Phase 10 -- escalating any uncertain module to a full-suite run --
+    is the real safety net for spellings this misses, not an ever-growing
+    list of special cases here.
+    """
+    func = node.func
+    if isinstance(func, ast.Name) and func.id in _DYNAMIC_IMPORT_NAMES:
+        return True
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr == "import_module"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "importlib"
+    )
+
 
 def extract_imports(source: str) -> tuple[list[RawImport], bool]:
     """Parse ``source`` and return (raw imports, uncertain).
