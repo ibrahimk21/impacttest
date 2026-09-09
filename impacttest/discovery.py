@@ -55,6 +55,24 @@ def path_to_module_name(rel_path: Path, root: str) -> str | None:
     return ".".join(remainder)
 
 
+def is_test_file(rel_path: Path, test_roots: list[str]) -> bool:
+    """A file is a test file if its name matches the pytest convention
+    AND it lives under one of the configured test roots -- a helper
+    module named test_utils.py sitting in source is not a test suite.
+    """
+    name = rel_path.name
+    looks_like_test = name.startswith("test_") or name.endswith("_test.py")
+    if not looks_like_test:
+        return False
+    return any(_is_under(rel_path, root) for root in test_roots)
+
+
+def _is_under(rel_path: Path, root: str) -> bool:
+    if root in ("", "."):
+        return True
+    return PurePosixPath(rel_path.as_posix()).is_relative_to(PurePosixPath(root))
+
+
 def _is_ignored(rel_path: Path, patterns: list[str]) -> bool:
     posix = rel_path.as_posix()
     return any(fnmatch.fnmatch(posix, pattern) for pattern in patterns)
@@ -83,7 +101,11 @@ def discover_modules(repo_root: Path, config: Config) -> list[Module]:
         for rel in _walk_root(repo_root, root, config.ignore):
             name = path_to_module_name(rel, root)
             if name is not None:
-                found[rel] = Module(path=rel, name=name)
+                found[rel] = Module(
+                    path=rel,
+                    name=name,
+                    is_test=is_test_file(rel, config.test_roots),
+                )
 
     for root in config.test_roots:
         for rel in _walk_root(repo_root, root, config.ignore):
@@ -95,6 +117,10 @@ def discover_modules(repo_root: Path, config: Config) -> list[Module]:
             # a stable, readable internal identifier.
             name = path_to_module_name(rel, ".")
             if name is not None:
-                found[rel] = Module(path=rel, name=name)
+                found[rel] = Module(
+                    path=rel,
+                    name=name,
+                    is_test=is_test_file(rel, config.test_roots),
+                )
 
     return sorted(found.values(), key=lambda m: m.path.as_posix())
