@@ -17,6 +17,13 @@ class _ImportVisitor(ast.NodeVisitor):
     never add an override for a container node type here without calling
     self.generic_visit(node) inside it, or nested imports will silently
     stop being seen (spec §24).
+
+    Star imports (`from x import *`) need no special handling either:
+    ast represents the `*` as a single alias named "*", so they already
+    produce RawImport(module="x", names=("*",)) via the normal
+    ImportFrom path -- exactly the "treat as a dependency on the whole
+    module" behavior spec §24 asks for. Module-level granularity means
+    we never needed to know which specific names were imported.
     """
 
     def __init__(self) -> None:
