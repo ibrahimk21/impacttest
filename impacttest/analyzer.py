@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from impacttest.models import RawImport
 
@@ -90,3 +92,37 @@ def extract_imports(source: str) -> tuple[list[RawImport], bool]:
     visitor = _ImportVisitor()
     visitor.visit(tree)
     return visitor.imports, visitor.uncertain
+
+
+@dataclass
+class AnalysisResult:
+    """The result of analyzing one file on disk: its raw imports, or a
+    failure marker.
+    """
+
+    imports: list[RawImport] = field(default_factory=list)
+    uncertain: bool = False
+    failed: bool = False
+    error: str | None = None
+
+
+def analyze_file(path: Path) -> AnalysisResult:
+    """Read and parse one file. Never raises: an unreadable file or a
+    syntax error becomes a failure marker (failed=True, uncertain=True)
+    rather than an empty import list. An empty list would look
+    identical to "this file genuinely has no imports" and silently
+    under-select every test downstream that depends on it -- exactly
+    the false-negative failure mode this tool exists to avoid
+    (spec §23 Req 6).
+    """
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return AnalysisResult(uncertain=True, failed=True, error=str(exc))
+
+    try:
+        imports, uncertain = extract_imports(source)
+    except SyntaxError as exc:
+        return AnalysisResult(uncertain=True, failed=True, error=str(exc))
+
+    return AnalysisResult(imports=imports, uncertain=uncertain)
