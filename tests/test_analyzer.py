@@ -1,4 +1,8 @@
-from impacttest.analyzer import extract_imports
+from pathlib import Path
+
+import pytest
+
+from impacttest.analyzer import analyze_file, extract_imports
 from impacttest.models import RawImport
 
 
@@ -120,3 +124,45 @@ def test_unrelated_import_module_method_does_not_false_trigger():
     # set uncertain -- an unrelated object with a same-named method must not.
     _, uncertain = extract_imports("catalog.import_module(name)")
     assert uncertain is False
+
+
+def test_extract_imports_raises_on_syntax_error():
+    # the pure, low-level function propagates -- analyze_file (below) is
+    # the layer responsible for catching it.
+    with pytest.raises(SyntaxError):
+        extract_imports("def f(:\n    pass\n")
+
+
+def test_analyze_file_marks_syntax_error_as_failed(tmp_path: Path) -> None:
+    broken = tmp_path / "broken.py"
+    broken.write_text("def f(:\n    pass\n", encoding="utf-8")
+
+    result = analyze_file(broken)
+
+    assert result.failed is True
+    assert result.uncertain is True
+    assert result.error is not None
+    assert result.imports == []
+
+
+def test_analyze_file_marks_unreadable_file_as_failed(tmp_path: Path) -> None:
+    missing = tmp_path / "does_not_exist.py"
+
+    result = analyze_file(missing)
+
+    assert result.failed is True
+    assert result.uncertain is True
+    assert result.error is not None
+    assert result.imports == []
+
+
+def test_analyze_file_succeeds_on_a_normal_file(tmp_path: Path) -> None:
+    ok = tmp_path / "ok.py"
+    ok.write_text("import os\n", encoding="utf-8")
+
+    result = analyze_file(ok)
+
+    assert result.failed is False
+    assert result.uncertain is False
+    assert result.error is None
+    assert result.imports == [RawImport(module="os", level=0)]
