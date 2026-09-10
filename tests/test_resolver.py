@@ -8,6 +8,7 @@ from impacttest.resolver import (
     build_index,
     module_name_for_path,
     resolve_import,
+    resolve_module,
 )
 
 
@@ -122,3 +123,104 @@ def test_imports_resolve_under_both_layouts():
     importer = _module("tests/test_cart.py", "tests.test_cart", is_test=True)
     resolved = resolve_import(RawImport("shop.cart", 0, ("Cart",)), importer, flat_layout)
     assert resolved.modules == ("shop", "shop.cart")
+
+
+# --- relative imports ----------------------------------------------------
+
+
+def _package_index() -> ModuleIndex:
+    return _index(
+        ("src/app/__init__.py", "app"),
+        ("src/app/users.py", "app.users"),
+        ("src/app/sub/__init__.py", "app.sub"),
+        ("src/app/sub/deep.py", "app.sub.deep"),
+        ("src/database.py", "database"),
+    )
+
+
+def test_level_1_from_a_module_means_its_own_package():
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(RawImport("users", 1, ("User",)), importer, _package_index())
+
+    assert resolved.modules == ("app", "app.users")
+    assert not resolved.uncertain
+
+
+def test_level_2_from_a_module_goes_up_one_package():
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(
+        RawImport("database", 2, ("connect",)), importer, _package_index()
+    )
+
+    assert resolved.modules == ("database",)
+
+
+def test_level_1_inside_a_package_initializer_stays_in_that_package():
+    # app/__init__.py is named "app" and *is* package app, so one dot
+    # means app -- not app's parent. Treating it like a normal module and
+    # dropping a component would resolve this to a top-level "users".
+    importer = _module("src/app/__init__.py", "app")
+
+    resolved = resolve_import(RawImport("users", 1, ("User",)), importer, _package_index())
+
+    assert resolved.modules == ("app", "app.users")
+
+
+def test_level_2_inside_a_package_initializer_reaches_the_source_root():
+    importer = _module("src/app/__init__.py", "app")
+
+    resolved = resolve_import(
+        RawImport("database", 2, ("connect",)), importer, _package_index()
+    )
+
+    assert resolved.modules == ("database",)
+
+
+def test_level_2_from_a_nested_module():
+    importer = _module("src/app/sub/deep.py", "app.sub.deep")
+
+    resolved = resolve_import(RawImport("users", 2, ("User",)), importer, _package_index())
+
+    assert resolved.modules == ("app", "app.users")
+
+
+def test_level_1_inside_a_nested_package_initializer():
+    importer = _module("src/app/sub/__init__.py", "app.sub")
+
+    resolved = resolve_import(RawImport("deep", 1, ("thing",)), importer, _package_index())
+
+    assert resolved.modules == ("app", "app.sub", "app.sub.deep")
+
+
+def test_bare_relative_import_resolves_the_imported_name():
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(RawImport(None, 1, ("users",)), importer, _package_index())
+
+    assert resolved.modules == ("app", "app.users")
+
+
+def test_relative_and_absolute_spellings_agree():
+    index = _package_index()
+    importer = _module("src/app/auth.py", "app.auth")
+
+    relative = resolve_import(RawImport("users", 1, ("User",)), importer, index)
+    absolute = resolve_import(RawImport("app.users", 0, ("User",)), importer, index)
+
+    assert relative == absolute
+
+
+def test_a_module_does_not_depend_on_itself():
+    # "from . import users" inside app/__init__.py resolves partly to app,
+    # which is the file doing the importing. True, and useless: it would
+    # put a self-loop on every package node.
+    initializer = _module(
+        "src/app/__init__.py", "app", imports=[RawImport(None, 1, ("users",))]
+    )
+
+    resolved = resolve_module(initializer, _package_index())
+
+    assert resolved.depends_on == ("app.users",)
+    assert not resolved.uncertain
