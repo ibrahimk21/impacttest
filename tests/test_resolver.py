@@ -367,3 +367,62 @@ def test_identical_reasons_are_not_repeated():
     resolved = resolve_module(importer, _package_index())
 
     assert len(resolved.reasons) == 1
+
+
+# --- third-party and stdlib ----------------------------------------------
+
+
+def test_third_party_and_stdlib_imports_produce_no_edge():
+    importer = _module("src/app/auth.py", "app.auth")
+    index = _package_index()
+
+    for raw in (
+        RawImport("os", 0, ()),
+        RawImport("os.path", 0, ()),
+        RawImport("numpy", 0, ()),
+        RawImport("numpy.linalg", 0, ()),
+        RawImport("requests", 0, ("get",)),
+        RawImport("requests.adapters", 0, ("HTTPAdapter",)),
+        RawImport("collections.abc", 0, ("Iterable",)),
+    ):
+        assert resolve_import(raw, importer, index).modules == ()
+
+
+def test_external_imports_are_dropped_quietly_not_flagged():
+    # Most imports in a real repository are external. If dropping one were
+    # reported as uncertain, Phase 10 would escalate every file that
+    # imports os to a full-suite run.
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(RawImport("numpy.linalg", 0, ()), importer, _package_index())
+
+    assert not resolved.uncertain
+    assert resolved.reason is None
+
+
+def test_a_name_merely_starting_with_an_internal_name_is_still_external():
+    # "app" is internal; "application" is not. Prefix matching happens on
+    # dotted components, never on characters.
+    importer = _module("src/app/auth.py", "app.auth")
+
+    for name in ("application", "apps", "app_helpers"):
+        resolved = resolve_import(RawImport(name, 0, ("x",)), importer, _package_index())
+        assert resolved.modules == ()
+        assert not resolved.uncertain
+
+
+def test_a_module_of_only_external_imports_has_no_dependencies():
+    importer = _module(
+        "src/app/auth.py",
+        "app.auth",
+        imports=[
+            RawImport("os", 0, ()),
+            RawImport("requests", 0, ("get",)),
+            RawImport("app.users", 0, ("User",)),
+        ],
+    )
+
+    resolved = resolve_module(importer, _package_index())
+
+    assert resolved.depends_on == ("app", "app.users")
+    assert not resolved.uncertain
