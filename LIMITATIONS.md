@@ -10,10 +10,10 @@ and reports rather than guesses at. The one thing it must never do is quietly
 miss a test, so where the analysis runs out of certainty it says so.
 
 **Status.** The analysis core is implemented: repository discovery, AST import
-extraction, module resolution, the dependency graph, impact traversal, and Git
-change detection. Conservative fallbacks and the CLI are not built yet. Items
-below that describe fallback behavior are marked *(planned)* and state the
-intended policy, not current behavior.
+extraction, module resolution, the dependency graph, impact traversal, Git
+change detection, and `impacttest analyze`. Conservative fallbacks, `run`, and
+`explain` are not built yet. Items below that describe fallback behavior are
+marked *(planned)* and state the intended policy, not current behavior.
 
 ---
 
@@ -177,6 +177,33 @@ source is instead reported as two independent changes — the source as
 unchanged (invisible to the diff) and the copy as `A` (added) — which is the
 same outcome as treating a genuine new file as added. No information is lost;
 the copy relationship just isn't surfaced.
+
+---
+
+## Recovering deleted and renamed-away modules
+
+Discovery only ever sees the current tree, so a module deleted (or renamed
+away, which `analyze` treats the same way) has no on-disk file to analyze.
+Left alone, that means a surviving file that still says `import
+deleted_module` -- a real bug, and exactly the case spec §10 requires this
+tool to catch -- would find nothing in the module index for that name and
+just look like any other unresolved internal import.
+
+`analyze` handles this by re-reading the deleted (or renamed-away) path's
+content from Git history, at the commit the diff started from, and adding it
+to the module graph as an extra node purely so other files' imports have
+something to resolve to. If that recovery fails for any reason -- the blob
+can't be read, the historical source doesn't parse -- the import isn't
+silently dropped; it falls back to the resolver's ordinary "internal-looking
+name, no file provides it" uncertainty (see below), which is the same
+conservative outcome the resolver already gives an import it cannot place.
+
+The recovered node's own dependencies are not used for anything -- only its
+name being present in the index matters. If that name is also claimed by a
+file discovery *did* find (the rare case of a deleted module's dotted name
+colliding with an unrelated current one), the real file wins and no ghost
+node is added, so this can never introduce a false edge, only occasionally
+miss recovering one.
 
 ---
 
