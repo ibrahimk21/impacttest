@@ -11,8 +11,8 @@ miss a test, so where the analysis runs out of certainty it says so.
 
 **Status.** The analysis core is implemented: repository discovery, AST import
 extraction, module resolution, the dependency graph, impact traversal, Git
-change detection, and `impacttest analyze`. Conservative fallbacks, `run`, and
-`explain` are not built yet. Items below that describe fallback behavior are
+change detection, `impacttest analyze`, `run`, and `explain`. Conservative
+fallbacks are not built yet. Items below that describe fallback behavior are
 marked *(planned)* and state the intended policy, not current behavior.
 
 ---
@@ -204,6 +204,19 @@ file discovery *did* find (the rare case of a deleted module's dotted name
 colliding with an unrelated current one), the real file wins and no ghost
 node is added, so this can never introduce a false edge, only occasionally
 miss recovering one.
+
+---
+
+## Output is plain ASCII on purpose
+
+Spec §19's own example renders an explanation path with a Unicode arrow
+(`↓ imports`). `impacttest explain` doesn't: it uses the alternative,
+increasingly-indented `imports` style from spec §6.3 instead, because a
+default Windows console (`cp1252`) raises `UnicodeEncodeError` outright on
+that character rather than printing a fallback glyph. A test-impact tool
+that crashes while explaining a selection, on the platform a good share of
+its users are actually on, is a worse outcome than a plainer arrow. Every
+other place output is printed was checked for the same risk and found clean.
 
 ---
 
