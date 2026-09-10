@@ -10,6 +10,7 @@ from pathlib import Path
 from impacttest.analyzer import analyze_file, extract_imports
 from impacttest.config import Config, load_config
 from impacttest.discovery import discover_modules, find_repo_root, is_test_file
+from impacttest.explain import explain_selection, format_explanation
 from impacttest.git import (
     WORKING_TREE,
     get_changed_files,
@@ -17,7 +18,7 @@ from impacttest.git import (
     read_file_at_revision,
 )
 from impacttest.graph import build_graph
-from impacttest.impact import compute_impact
+from impacttest.impact import ImpactResult, compute_impact
 from impacttest.models import ChangeSet, Module
 from impacttest.resolver import build_index, module_name_for_path, resolve_all
 from impacttest.runner import run_selected_tests
@@ -40,7 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_analysis_arguments(run_parser)
 
-    subparsers.add_parser("explain", help="Explain why a test was selected.")
+    explain_parser = subparsers.add_parser(
+        "explain", help="Explain why a test was selected."
+    )
+    explain_parser.add_argument("test", help="Path to the test file to explain.")
+    _add_analysis_arguments(explain_parser)
     return parser
 
 
@@ -79,6 +84,12 @@ def _add_analysis_arguments(parser: argparse.ArgumentParser) -> None:
 class AnalysisReport:
     """Everything ``analyze``'s output needs, already reduced to what a
     human -- or ``--json`` in Phase 13 -- would want to show.
+
+    ``impact`` and ``path_by_name`` are the raw traversal result and the
+    name -> path lookup (covering ghost modules too) that ``explain``
+    needs to reconstruct a dependency path -- carried here so `run` and
+    `explain` don't each re-run discovery, resolution and the graph build
+    from scratch.
     """
 
     changed_paths: list[Path] = field(default_factory=list)
@@ -87,6 +98,8 @@ class AnalysisReport:
     node_count: int = 0
     edge_count: int = 0
     uncertain: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
+    impact: ImpactResult = field(default_factory=ImpactResult)
+    path_by_name: dict[str, Path] = field(default_factory=dict)
 
 
 def run_analysis(
@@ -161,6 +174,8 @@ def run_analysis(
         node_count=graph.node_count,
         edge_count=graph.edge_count,
         uncertain=uncertain,
+        impact=impact_result,
+        path_by_name={module.name: module.path for module in all_modules},
     )
 
 
@@ -284,6 +299,30 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return run_selected_tests(repo_root, report.selected_tests)
 
 
+def _cmd_explain(args: argparse.Namespace) -> int:
+    try:
+        repo_root, config, base = _prepare(args)
+        report = run_analysis(repo_root, config, base=base, head=args.head)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    test_path = Path(args.test)
+    test_name = module_name_for_path(test_path, config)
+    if test_name is None:
+        print(
+            f"error: '{args.test}' is not under any configured source or test root",
+            file=sys.stderr,
+        )
+        return 1
+
+    explanation = explain_selection(
+        test_path, test_name, report.impact, report.path_by_name
+    )
+    print(format_explanation(explanation))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -296,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_analyze(args)
     if args.command == "run":
         return _cmd_run(args)
+    if args.command == "explain":
+        return _cmd_explain(args)
 
     print(f"impacttest {args.command}: not implemented yet.")
     return 0
