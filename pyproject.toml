@@ -49,6 +49,7 @@ module = [
     "test_git",
     "test_graph",
     "test_impact",
+    "test_integration",
     "test_resolver",
     "test_runner",
     "test_smoke",
