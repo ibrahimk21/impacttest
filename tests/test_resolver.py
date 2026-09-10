@@ -12,7 +12,9 @@ from impacttest.resolver import (
 )
 
 
-def _module(path: str, name: str, *, imports=(), is_test=False, uncertain=False) -> Module:
+def _module(
+    path: str, name: str, *, imports=(), is_test=False, uncertain=False
+) -> Module:
     return Module(
         path=Path(path),
         name=name,
@@ -117,11 +119,15 @@ def test_imports_resolve_under_both_layouts():
     )
 
     importer = _module("src/app/auth.py", "app.auth")
-    resolved = resolve_import(RawImport("app.users", 0, ("User",)), importer, src_layout)
+    resolved = resolve_import(
+        RawImport("app.users", 0, ("User",)), importer, src_layout
+    )
     assert resolved.modules == ("app", "app.users")
 
     importer = _module("tests/test_cart.py", "tests.test_cart", is_test=True)
-    resolved = resolve_import(RawImport("shop.cart", 0, ("Cart",)), importer, flat_layout)
+    resolved = resolve_import(
+        RawImport("shop.cart", 0, ("Cart",)), importer, flat_layout
+    )
     assert resolved.modules == ("shop", "shop.cart")
 
 
@@ -141,7 +147,9 @@ def _package_index() -> ModuleIndex:
 def test_level_1_from_a_module_means_its_own_package():
     importer = _module("src/app/auth.py", "app.auth")
 
-    resolved = resolve_import(RawImport("users", 1, ("User",)), importer, _package_index())
+    index = _package_index()
+
+    resolved = resolve_import(RawImport("users", 1, ("User",)), importer, index)
 
     assert resolved.modules == ("app", "app.users")
     assert not resolved.uncertain
@@ -163,7 +171,9 @@ def test_level_1_inside_a_package_initializer_stays_in_that_package():
     # dropping a component would resolve this to a top-level "users".
     importer = _module("src/app/__init__.py", "app")
 
-    resolved = resolve_import(RawImport("users", 1, ("User",)), importer, _package_index())
+    index = _package_index()
+
+    resolved = resolve_import(RawImport("users", 1, ("User",)), importer, index)
 
     assert resolved.modules == ("app", "app.users")
 
@@ -181,7 +191,9 @@ def test_level_2_inside_a_package_initializer_reaches_the_source_root():
 def test_level_2_from_a_nested_module():
     importer = _module("src/app/sub/deep.py", "app.sub.deep")
 
-    resolved = resolve_import(RawImport("users", 2, ("User",)), importer, _package_index())
+    index = _package_index()
+
+    resolved = resolve_import(RawImport("users", 2, ("User",)), importer, index)
 
     assert resolved.modules == ("app", "app.users")
 
@@ -189,7 +201,9 @@ def test_level_2_from_a_nested_module():
 def test_level_1_inside_a_nested_package_initializer():
     importer = _module("src/app/sub/__init__.py", "app.sub")
 
-    resolved = resolve_import(RawImport("deep", 1, ("thing",)), importer, _package_index())
+    index = _package_index()
+
+    resolved = resolve_import(RawImport("deep", 1, ("thing",)), importer, index)
 
     assert resolved.modules == ("app", "app.sub", "app.sub.deep")
 
@@ -197,7 +211,9 @@ def test_level_1_inside_a_nested_package_initializer():
 def test_bare_relative_import_resolves_the_imported_name():
     importer = _module("src/app/auth.py", "app.auth")
 
-    resolved = resolve_import(RawImport(None, 1, ("users",)), importer, _package_index())
+    index = _package_index()
+
+    resolved = resolve_import(RawImport(None, 1, ("users",)), importer, index)
 
     assert resolved.modules == ("app", "app.users")
 
@@ -281,7 +297,9 @@ def test_unresolvable_relative_import_is_uncertain_but_keeps_its_package():
     # failing to find it means we lost track -- not that it is external.
     importer = _module("src/app/auth.py", "app.auth")
 
-    resolved = resolve_import(RawImport("missing", 1, ("x",)), importer, _package_index())
+    index = _package_index()
+
+    resolved = resolve_import(RawImport("missing", 1, ("x",)), importer, index)
 
     assert resolved.modules == ("app",)
     assert resolved.uncertain
@@ -290,7 +308,9 @@ def test_unresolvable_relative_import_is_uncertain_but_keeps_its_package():
 def test_absolute_import_of_a_missing_internal_module_is_uncertain():
     importer = _module("src/app/auth.py", "app.auth")
 
-    resolved = resolve_import(RawImport("app.missing", 0, ()), importer, _package_index())
+    index = _package_index()
+
+    resolved = resolve_import(RawImport("app.missing", 0, ()), importer, index)
 
     assert resolved.modules == ("app",)
     assert resolved.uncertain
@@ -303,7 +323,9 @@ def test_attribute_import_from_a_known_package_is_not_uncertain():
     # importing a name out of a package, not a missing file.
     importer = _module("src/app/auth.py", "app.auth")
 
-    resolved = resolve_import(RawImport("app", 0, ("User",)), importer, _package_index())
+    index = _package_index()
+
+    resolved = resolve_import(RawImport("app", 0, ("User",)), importer, index)
 
     assert resolved.modules == ("app",)
     assert not resolved.uncertain
@@ -394,7 +416,9 @@ def test_external_imports_are_dropped_quietly_not_flagged():
     # imports os to a full-suite run.
     importer = _module("src/app/auth.py", "app.auth")
 
-    resolved = resolve_import(RawImport("numpy.linalg", 0, ()), importer, _package_index())
+    index = _package_index()
+
+    resolved = resolve_import(RawImport("numpy.linalg", 0, ()), importer, index)
 
     assert not resolved.uncertain
     assert resolved.reason is None
@@ -405,8 +429,10 @@ def test_a_name_merely_starting_with_an_internal_name_is_still_external():
     # dotted components, never on characters.
     importer = _module("src/app/auth.py", "app.auth")
 
+    index = _package_index()
+
     for name in ("application", "apps", "app_helpers"):
-        resolved = resolve_import(RawImport(name, 0, ("x",)), importer, _package_index())
+        resolved = resolve_import(RawImport(name, 0, ("x",)), importer, index)
         assert resolved.modules == ()
         assert not resolved.uncertain
 
@@ -438,10 +464,13 @@ def test_the_same_statement_resolves_both_ways_by_what_exists_on_disk():
     statement = RawImport("app", 0, ("users",))
     importer = _module("src/app/auth.py", "app.auth")
 
-    submodule = _index(("src/app/__init__.py", "app"), ("src/app/users.py", "app.users"))
+    submodule = _index(
+        ("src/app/__init__.py", "app"), ("src/app/users.py", "app.users")
+    )
     attribute = _index(("src/app/__init__.py", "app"))
 
-    assert resolve_import(statement, importer, submodule).modules == ("app", "app.users")
+    found = resolve_import(statement, importer, submodule)
+    assert found.modules == ("app", "app.users")
     assert resolve_import(statement, importer, attribute).modules == ("app",)
 
 
@@ -451,7 +480,9 @@ def test_a_submodule_import_keeps_the_package_edge_too():
     # can break this importer. Dropping that edge would drop a real test.
     importer = _module("src/app/auth.py", "app.auth")
 
-    resolved = resolve_import(RawImport("app", 0, ("users",)), importer, _package_index())
+    index = _package_index()
+
+    resolved = resolve_import(RawImport("app", 0, ("users",)), importer, index)
 
     assert "app" in resolved.modules
 
@@ -470,7 +501,9 @@ def test_one_statement_can_name_a_submodule_and_an_attribute_at_once():
 def test_plain_dotted_import_pulls_in_its_parent_packages():
     importer = _module("src/app/auth.py", "app.auth")
 
-    resolved = resolve_import(RawImport("app.sub.deep", 0, ()), importer, _package_index())
+    index = _package_index()
+
+    resolved = resolve_import(RawImport("app.sub.deep", 0, ()), importer, index)
 
     assert resolved.modules == ("app", "app.sub", "app.sub.deep")
 
@@ -490,7 +523,9 @@ def test_star_import_depends_on_the_module_only():
     # needed to know which names it pulled in (spec §24).
     importer = _module("src/app/auth.py", "app.auth")
 
-    resolved = resolve_import(RawImport("app.users", 0, ("*",)), importer, _package_index())
+    index = _package_index()
+
+    resolved = resolve_import(RawImport("app.users", 0, ("*",)), importer, index)
 
     assert resolved.modules == ("app", "app.users")
 

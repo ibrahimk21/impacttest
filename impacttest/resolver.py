@@ -48,7 +48,10 @@ def module_name_for_path(rel_path: Path, config: Config) -> str | None:
         if name is not None:
             return name
 
-    if any(path_to_module_name(rel_path, root) is not None for root in config.test_roots):
+    under_test_root = any(
+        path_to_module_name(rel_path, root) is not None for root in config.test_roots
+    )
+    if under_test_root:
         return path_to_module_name(rel_path, ".")
 
     return None
