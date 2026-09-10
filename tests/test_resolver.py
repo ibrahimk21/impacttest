@@ -79,15 +79,35 @@ def test_naming_agrees_with_discovery_on_a_real_tree(tmp_path: Path):
     # git reports as deleted has no discovered Module). If it disagreed
     # with discovery for the paths that do exist, a deleted file would map
     # to a name no graph node carries and its dependents would go
-    # unselected -- so pin the two together.
+    # unselected.
+    #
+    # Nested roots are the case that can actually diverge, and both
+    # orderings are checked: whichever way round they are listed, one file
+    # has two plausible names and the two components have to pick the
+    # same one.
     _touch(tmp_path / "src/app/__init__.py")
     _touch(tmp_path / "src/app/auth.py")
     _touch(tmp_path / "tests/test_auth.py")
     _touch(tmp_path / "tests/helpers.py")
-    cfg = Config(source_roots=["src"], test_roots=["tests"])
 
-    for module in discover_modules(tmp_path, cfg):
-        assert module_name_for_path(module.path, cfg) == module.name
+    for source_roots in (["src"], ["."], ["src", "."], [".", "src"]):
+        cfg = Config(source_roots=source_roots, test_roots=["tests"])
+        for module in discover_modules(tmp_path, cfg):
+            assert module_name_for_path(module.path, cfg) == module.name, source_roots
+
+
+def test_nested_source_roots_name_files_by_the_deeper_root(tmp_path: Path):
+    # "app.auth" is the name a src layout makes importable, so it is the
+    # name other modules write. Naming the file "src.app.auth" instead
+    # would leave "from app.auth import login" resolving to nothing --
+    # silently, since no prefix of it would be internal either, which
+    # reads exactly like a third-party import.
+    _touch(tmp_path / "src/app/auth.py")
+
+    for source_roots in (["src", "."], [".", "src"]):
+        cfg = Config(source_roots=source_roots, test_roots=["tests"])
+        names = {m.name for m in discover_modules(tmp_path, cfg)}
+        assert "app.auth" in names, source_roots
 
 
 # --- the index -----------------------------------------------------------

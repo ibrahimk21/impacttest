@@ -3,18 +3,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from impacttest.config import Config
-from impacttest.discovery import path_to_module_name
+from impacttest.discovery import path_to_module_name, sort_roots_by_specificity
 from impacttest.models import Module, RawImport
-
-
-def _root_depth(root: str) -> int:
-    """How specific a configured root is, in path components."""
-    if root in ("", "."):
-        return 0
-    return len(PurePosixPath(root).parts)
 
 
 def module_name_for_path(rel_path: Path, config: Config) -> str | None:
@@ -22,12 +15,11 @@ def module_name_for_path(rel_path: Path, config: Config) -> str | None:
     uses to identify it, or None if the path is outside every configured
     root (or isn't a ``.py`` file at all).
 
-    Roots are tried most-specific-first, so a path under both ``.`` and
-    ``src`` gets the ``src``-relative name ``app.auth`` rather than
-    ``src.app.auth``. That matters because the specific root is the one
-    that is actually on ``sys.path`` in a src layout, which makes
-    ``app.auth`` the name other modules will import it by -- and names
-    only produce graph edges if both sides spell them the same way.
+    Roots are tried most-specific-first, by the shared rule in
+    :func:`impacttest.discovery.sort_roots_by_specificity`, so a path
+    under both ``.`` and ``src`` gets the ``src``-relative name
+    ``app.auth``. Discovery names files by that same rule, which is what
+    keeps the two from disagreeing about what a file is called.
 
     A path under a test root but no source root is named relative to the
     repo root (``tests/test_cart.py`` -> ``tests.test_cart``), matching
@@ -38,12 +30,12 @@ def module_name_for_path(rel_path: Path, config: Config) -> str | None:
     root would map to a module name no graph node has, and its dependent
     tests would silently go unselected.
 
-    Discovery is still the authority for files that exist: prefer
-    ``ModuleIndex.by_path`` when the file is on disk, and use this for
-    paths that aren't (a deleted file named by ``git diff`` has no
-    discovered Module to look up).
+    This exists for paths that are not on disk -- a deleted file named by
+    ``git diff`` has no discovered Module to look up. For files that do
+    exist, ``ModuleIndex.by_path`` answers the same question without
+    recomputing anything.
     """
-    for root in sorted(config.source_roots, key=_root_depth, reverse=True):
+    for root in sort_roots_by_specificity(config.source_roots):
         name = path_to_module_name(rel_path, root)
         if name is not None:
             return name

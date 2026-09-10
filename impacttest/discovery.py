@@ -55,6 +55,30 @@ def path_to_module_name(rel_path: Path, root: str) -> str | None:
     return ".".join(remainder)
 
 
+def _root_depth(root: str) -> int:
+    """How specific a configured root is, in path components."""
+    if root in ("", "."):
+        return 0
+    return len(PurePosixPath(root).parts)
+
+
+def sort_roots_by_specificity(roots: list[str]) -> list[str]:
+    """Configured roots, most specific first.
+
+    Roots can nest -- ``["src", "."]`` is legal, and ``src/app/auth.py``
+    lies under both. Whoever names that file has to make the same choice
+    every time, or discovery and the resolver end up calling one file two
+    different things and the import connecting them resolves to nothing.
+    So the rule lives here, once, and both callers take it from here.
+
+    Most specific wins because that is the root a src layout actually
+    puts on ``sys.path``: other modules import the file as ``app.auth``,
+    never as ``src.app.auth``, and a name only produces an edge if both
+    ends spell it identically.
+    """
+    return sorted(roots, key=_root_depth, reverse=True)
+
+
 def is_test_file(rel_path: Path, test_roots: list[str]) -> bool:
     """A file is a test file if its name matches the pytest convention
     AND it lives under one of the configured test roots -- a helper
@@ -97,8 +121,13 @@ def discover_modules(repo_root: Path, config: Config) -> list[Module]:
     """
     found: dict[Path, Module] = {}
 
-    for root in config.source_roots:
+    # Most specific root first, and first match wins, so a file under two
+    # nested roots is named by the deeper one -- the same choice
+    # resolver.module_name_for_path makes for paths that no longer exist.
+    for root in sort_roots_by_specificity(config.source_roots):
         for rel in _walk_root(repo_root, root, config.ignore):
+            if rel in found:
+                continue
             name = path_to_module_name(rel, root)
             if name is not None:
                 found[rel] = Module(
