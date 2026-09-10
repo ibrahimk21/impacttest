@@ -224,3 +224,146 @@ def test_a_module_does_not_depend_on_itself():
 
     assert resolved.depends_on == ("app.users",)
     assert not resolved.uncertain
+
+
+# --- uncertainty ---------------------------------------------------------
+
+
+def test_relative_import_escaping_the_source_root_is_uncertain():
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(RawImport("x", 3, ("y",)), importer, _package_index())
+
+    assert resolved.modules == ()
+    assert resolved.uncertain
+    assert "above the source root" in resolved.reason
+
+
+def test_escaping_from_a_top_level_module_is_uncertain():
+    importer = _module("src/main.py", "main")
+
+    resolved = resolve_import(RawImport("x", 2, ("y",)), importer, _package_index())
+
+    assert resolved.uncertain
+
+
+def test_escaping_from_a_package_initializer_is_uncertain():
+    importer = _module("src/app/__init__.py", "app")
+
+    resolved = resolve_import(RawImport("x", 3, ("y",)), importer, _package_index())
+
+    assert resolved.uncertain
+
+
+def test_absurd_relative_level_does_not_crash():
+    importer = _module("src/app/sub/deep.py", "app.sub.deep")
+
+    resolved = resolve_import(RawImport("x", 99, ("y",)), importer, _package_index())
+
+    assert resolved.uncertain
+
+
+def test_landing_exactly_on_the_source_root_is_not_an_escape():
+    # The boundary the escape check has to get right: app.auth at level 2
+    # lands on "" -- the source root itself, where top-level modules live.
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(
+        RawImport("database", 2, ("connect",)), importer, _package_index()
+    )
+
+    assert resolved.modules == ("database",)
+    assert not resolved.uncertain
+
+
+def test_unresolvable_relative_import_is_uncertain_but_keeps_its_package():
+    # A relative import can only name something inside the repository, so
+    # failing to find it means we lost track -- not that it is external.
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(RawImport("missing", 1, ("x",)), importer, _package_index())
+
+    assert resolved.modules == ("app",)
+    assert resolved.uncertain
+
+
+def test_absolute_import_of_a_missing_internal_module_is_uncertain():
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(RawImport("app.missing", 0, ()), importer, _package_index())
+
+    assert resolved.modules == ("app",)
+    assert resolved.uncertain
+    assert "no file in this repository provides it" in resolved.reason
+
+
+def test_attribute_import_from_a_known_package_is_not_uncertain():
+    # The control for the test above: "from app import User" also fails to
+    # find a module called app.User, but that is the ordinary case of
+    # importing a name out of a package, not a missing file.
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(RawImport("app", 0, ("User",)), importer, _package_index())
+
+    assert resolved.modules == ("app",)
+    assert not resolved.uncertain
+
+
+def test_a_name_claimed_by_two_files_is_ambiguous():
+    index = _index(("lib/app/u.py", "app.u"), ("src/app/u.py", "app.u"))
+    importer = _module("src/app/auth.py", "app.auth")
+
+    assert index.ambiguous == {"app.u"}
+    assert index.by_name["app.u"] == Path("lib/app/u.py")  # deterministic
+
+    resolved = resolve_import(RawImport("app.u", 0, ()), importer, index)
+
+    assert resolved.modules == ("app.u",)  # the edge is still emitted
+    assert resolved.uncertain
+
+
+def test_module_uncertainty_survives_from_the_analyzer():
+    # analyzer.py sets Module.uncertain for importlib/exec/eval. Resolution
+    # cannot clear that -- the imports it can see are not the whole story.
+    importer = _module(
+        "src/app/auth.py",
+        "app.auth",
+        imports=[RawImport("app.users", 0, ("User",))],
+        uncertain=True,
+    )
+
+    resolved = resolve_module(importer, _package_index())
+
+    assert resolved.depends_on == ("app", "app.users")
+    assert resolved.uncertain
+    assert "dynamic import construct" in resolved.reasons[0]
+
+
+def test_one_bad_import_makes_the_whole_module_uncertain():
+    importer = _module(
+        "src/app/auth.py",
+        "app.auth",
+        imports=[
+            RawImport("app.users", 0, ("User",)),
+            RawImport("os", 0, ()),
+            RawImport("missing", 1, ("x",)),
+        ],
+    )
+
+    resolved = resolve_module(importer, _package_index())
+
+    assert resolved.depends_on == ("app", "app.users")
+    assert resolved.uncertain
+    assert len(resolved.reasons) == 1
+
+
+def test_identical_reasons_are_not_repeated():
+    importer = _module(
+        "src/app/auth.py",
+        "app.auth",
+        imports=[RawImport("missing", 1, ("x",)), RawImport("missing", 1, ("y",))],
+    )
+
+    resolved = resolve_module(importer, _package_index())
+
+    assert len(resolved.reasons) == 1
