@@ -157,6 +157,47 @@ def _relative_base(importer: Module, level: int) -> str | None:
     return ".".join(parts[: len(parts) - ascend])
 
 
+def _resolve_target(
+    target: str, names: tuple[str, ...], index: ModuleIndex
+) -> tuple[str, ...]:
+    """Every internal module a statement aimed at ``target`` touches.
+
+    ``from app import users`` is ambiguous on its face: ``users`` may be
+    a submodule ``app/users.py`` or an attribute defined in
+    ``app/__init__.py``, and which one it is cannot be read off the
+    statement. Python decides at runtime by importing ``app`` and looking
+    for the attribute before falling back to the submodule; we decide the
+    same question against the module table, which is the static
+    equivalent of the filesystem check (spec §24).
+
+    Both answers can be right at once, so both edges are emitted. Even
+    when ``app.users`` is a real submodule, importing it runs
+    ``app/__init__.py`` first -- that is how Python's import system
+    works, not a guess -- so a change to the package initializer really
+    can break the importer. Emitting only the deeper edge would lose
+    that, and a lost edge is a test that never runs. The extra edge costs
+    a denser graph around package initializers, which are rarely touched;
+    the missing one costs a false negative, which is the failure this
+    tool exists to prevent.
+
+    A star import contributes nothing beyond ``target`` itself: "*" is
+    not a name that could be a submodule, and module-level granularity
+    means we never needed to know which names it pulled in (spec §24).
+    """
+    found: list[str] = []
+    if target and target in index:
+        found.append(target)
+
+    for name in names:
+        if name == "*":
+            continue
+        candidate = _join(target, name)
+        if candidate in index and candidate not in found:
+            found.append(candidate)
+
+    return tuple(found)
+
+
 def resolve_import(
     imp: RawImport, importer: Module, index: ModuleIndex
 ) -> Resolution:
@@ -194,15 +235,19 @@ def resolve_import(
             return Resolution()
         target = imp.module
 
-    if target and target in index:
-        return Resolution(modules=(target,))
+    modules = _resolve_target(target, imp.names, index)
+    if modules:
+        return Resolution(modules=modules)
 
     if imp.level:
+        # "from . import nope" has no module of its own to name in the
+        # message, so fall back to the imported names.
+        sought = target or " / ".join(n for n in imp.names if n != "*")
         return Resolution(
             uncertain=True,
             reason=(
                 f"relative import in '{importer.name}' does not resolve to a "
-                f"known module (looked for '{target}')"
+                f"known module (looked for '{sought}')"
             ),
         )
     return Resolution()
