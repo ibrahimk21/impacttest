@@ -11,9 +11,9 @@ miss a test, so where the analysis runs out of certainty it says so.
 
 **Status.** The analysis core is implemented: repository discovery, AST import
 extraction, module resolution, the dependency graph, impact traversal, Git
-change detection, `impacttest analyze`, `run`, and `explain`. Conservative
-fallbacks are not built yet. Items below that describe fallback behavior are
-marked *(planned)* and state the intended policy, not current behavior.
+change detection, `impacttest analyze`, `run`, `explain`, and the conservative
+full-suite fallback. Caching is not built yet; the one fallback trigger that
+depends on it (a corrupt cache) is marked *(planned)* below.
 
 ---
 
@@ -31,8 +31,10 @@ eval(expression)
 There is no static answer here — what gets imported may depend on an
 environment variable or a config file that does not exist until the program
 runs. Modules containing any of these constructs are flagged `uncertain`, and
-their dependency lists are treated as possibly incomplete *(planned: an
-uncertain module anywhere in the impacted set escalates to a full-suite run)*.
+an uncertain module anywhere in the impacted set escalates to a full-suite run
+(the MVP policy spec §16 recommends; see "Conservative fallback" below).
+`--no-all-on-uncertain` disables this specific escalation for anyone willing
+to trade the safety margin for a tighter selection.
 
 Detection is by name and is not exhaustive. `from importlib import
 import_module` followed by a bare `import_module(...)` call is not currently
@@ -62,9 +64,10 @@ Nothing that connects a test to code without an import statement is visible:
 - subprocess and CLI invocations
 - reflection over strings (`getattr(module, name)`)
 
-*(Planned: a changed `conftest.py`, `pytest.ini`, or configured global file
-forces a full-suite run, which covers the fixture case structurally rather than
-by understanding it.)*
+A changed `conftest.py`, `pytest.ini`, `pyproject.toml`, or configured
+`global_files` entry forces a full-suite run instead (see "Conservative
+fallback" below), which covers the fixture case structurally rather than by
+understanding it.
 
 ---
 
@@ -130,6 +133,39 @@ These are detected, not silently dropped:
 A relative import can only ever name something inside the repository, so one
 that fails to resolve means the analysis lost track — never that the target is
 third-party.
+
+---
+
+## Conservative fallback
+
+Four independent triggers force a full-suite run (`fallback.py`, spec §16),
+checked in this order, first match wins:
+
+1. **A global file changed.** Any `conftest.py` or `pytest.ini` anywhere in
+   the repository, any change to `pyproject.toml` at all, or a path listed in
+   the project's `global_files` config.
+2. **Analysis failed somewhere in the repository.** Not scoped to the
+   impacted set — an unreadable or unparseable file's true dependencies (and
+   who depends on it) are completely unknown, which is a strictly bigger risk
+   than one uncertain module inside an otherwise fully-traced chain.
+3. **An uncertain module is in the impacted set** (the MVP policy above).
+   Disable with `--no-all-on-uncertain`.
+4. *(Planned)* **The dependency graph cache is corrupt** — not applicable yet;
+   caching is Phase 12.
+
+`pyproject.toml` triggers on *any* change to the file, not only a change
+inside its `[tool.pytest.ini_options]` table. Diffing one TOML table out of a
+file is precision this policy doesn't need: an unnecessary full-suite run
+costs seconds, and a missed pytest-config change costs trust in every
+selection made after it (spec §15's asymmetry, applied to the fallback logic
+itself, not just the graph).
+
+When a fallback fires, `selected_tests` becomes every currently-discovered
+test file, replacing whatever the graph traversal computed — never left as
+whatever a normal selection happened to produce, and never left empty. An
+empty selection means something specific to both `format_report` and the
+runner (skip pytest entirely), which is the opposite of what a safety
+fallback means.
 
 ---
 
