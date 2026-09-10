@@ -44,6 +44,7 @@ module = [
     "test_config",
     "test_discovery",
     "test_graph",
+    "test_impact",
     "test_resolver",
     "test_smoke",
 ]
