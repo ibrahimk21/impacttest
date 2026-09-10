@@ -11,6 +11,7 @@ from impacttest.analyzer import analyze_file, extract_imports
 from impacttest.config import Config, load_config
 from impacttest.discovery import discover_modules, find_repo_root, is_test_file
 from impacttest.explain import explain_selection, format_explanation
+from impacttest.fallback import decide_fallback
 from impacttest.git import (
     WORKING_TREE,
     get_changed_files,
@@ -78,6 +79,15 @@ def _add_analysis_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--verbose", action="store_true", help="Print additional analysis detail."
     )
+    parser.add_argument(
+        "--all-on-uncertain",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Run the full suite if any impacted module is uncertain "
+            "(default: enabled). Pass --no-all-on-uncertain to disable."
+        ),
+    )
 
 
 @dataclass
@@ -100,10 +110,16 @@ class AnalysisReport:
     uncertain: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
     impact: ImpactResult = field(default_factory=ImpactResult)
     path_by_name: dict[str, Path] = field(default_factory=dict)
+    fallback: bool = False
+    fallback_reason: str | None = None
 
 
 def run_analysis(
-    repo_root: Path, config: Config, base: str, head: str = WORKING_TREE
+    repo_root: Path,
+    config: Config,
+    base: str,
+    head: str = WORKING_TREE,
+    all_on_uncertain: bool = True,
 ) -> AnalysisReport:
     """Wire discovery -> analyze -> resolve -> graph -> git diff -> impact.
 
@@ -114,12 +130,22 @@ def run_analysis(
     back out of history and folded in as an extra node before resolving,
     letting a leftover ``import deleted_module`` in a file that survived
     the change resolve to a real edge instead of vanishing.
+
+    Phase 10's conservative fallback is checked last, after the normal
+    selection is computed, and -- when triggered -- *replaces*
+    ``selected_tests`` with every currently-discovered test file rather
+    than leaving it empty: an empty selection means "nothing is affected"
+    to both ``format_report`` and the runner (which skips invoking pytest
+    entirely for one), the opposite of what a safety fallback means.
     """
     modules = discover_modules(repo_root, config)
+    failed_paths: list[Path] = []
     for module in modules:
         result = analyze_file(repo_root / module.path)
         module.imports = result.imports
         module.uncertain = result.uncertain or result.failed
+        if result.failed:
+            failed_paths.append(module.path)
 
     total_tests = sum(1 for module in modules if module.is_test)
     changes = get_changed_files(repo_root, base=base, head=head)
@@ -167,6 +193,20 @@ def run_analysis(
         key=lambda item: item[0],
     )
 
+    fallback = decide_fallback(
+        changes,
+        config,
+        failed_paths,
+        impact_result.impacted,
+        resolved,
+        all_on_uncertain=all_on_uncertain,
+    )
+    if fallback.triggered:
+        selected_tests = sorted(
+            (module.path for module in modules if module.is_test),
+            key=lambda p: p.as_posix(),
+        )
+
     return AnalysisReport(
         changed_paths=changed_paths,
         selected_tests=selected_tests,
@@ -176,6 +216,8 @@ def run_analysis(
         uncertain=uncertain,
         impact=impact_result,
         path_by_name={module.name: module.path for module in all_modules},
+        fallback=fallback.triggered,
+        fallback_reason=fallback.reason,
     )
 
 
@@ -246,6 +288,11 @@ def format_report(report: AnalysisReport, verbose: bool = False) -> str:
         reduction = (1 - selected / report.total_tests) * 100
         lines.append(f"{reduction:.1f}% test-file reduction")
 
+    if report.fallback:
+        lines.append("")
+        lines.append("Full-suite safety fallback triggered.")
+        lines.append(f"Reason: {report.fallback_reason}")
+
     if verbose:
         lines.append("")
         lines.append(
@@ -279,7 +326,13 @@ def _prepare(args: argparse.Namespace) -> tuple[Path, Config, str]:
 def _cmd_analyze(args: argparse.Namespace) -> int:
     try:
         repo_root, config, base = _prepare(args)
-        report = run_analysis(repo_root, config, base=base, head=args.head)
+        report = run_analysis(
+            repo_root,
+            config,
+            base=base,
+            head=args.head,
+            all_on_uncertain=args.all_on_uncertain,
+        )
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -291,7 +344,13 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
 def _cmd_run(args: argparse.Namespace) -> int:
     try:
         repo_root, config, base = _prepare(args)
-        report = run_analysis(repo_root, config, base=base, head=args.head)
+        report = run_analysis(
+            repo_root,
+            config,
+            base=base,
+            head=args.head,
+            all_on_uncertain=args.all_on_uncertain,
+        )
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -302,7 +361,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
 def _cmd_explain(args: argparse.Namespace) -> int:
     try:
         repo_root, config, base = _prepare(args)
-        report = run_analysis(repo_root, config, base=base, head=args.head)
+        report = run_analysis(
+            repo_root,
+            config,
+            base=base,
+            head=args.head,
+            all_on_uncertain=args.all_on_uncertain,
+        )
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -317,7 +382,12 @@ def _cmd_explain(args: argparse.Namespace) -> int:
         return 1
 
     explanation = explain_selection(
-        test_path, test_name, report.impact, report.path_by_name
+        test_path,
+        test_name,
+        report.impact,
+        report.path_by_name,
+        fallback=report.fallback,
+        fallback_reason=report.fallback_reason,
     )
     print(format_explanation(explanation))
     return 0

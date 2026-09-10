@@ -16,6 +16,7 @@ DEFAULT_SOURCE_ROOTS = ["src"]
 DEFAULT_TEST_ROOTS = ["tests"]
 DEFAULT_BASE_BRANCH = "main"
 DEFAULT_IGNORE = [".venv/**", "venv/**", "build/**", "dist/**"]
+DEFAULT_GLOBAL_FILES: list[str] = []
 
 
 @dataclass
@@ -24,6 +25,12 @@ class Config:
     test_roots: list[str] = field(default_factory=lambda: list(DEFAULT_TEST_ROOTS))
     base_branch: str = DEFAULT_BASE_BRANCH
     ignore: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE))
+    # Extra repo-relative paths (exact match, spec §21) that force a
+    # full-suite fallback when changed. conftest.py, pytest.ini and
+    # pyproject.toml are already covered unconditionally (fallback.py) --
+    # this is for anything else a project considers global, e.g. a shared
+    # fixtures module every test imports indirectly through a plugin.
+    global_files: list[str] = field(default_factory=lambda: list(DEFAULT_GLOBAL_FILES))
 
 
 def load_config(root: Path) -> Config:
@@ -47,4 +54,5 @@ def load_config(root: Path) -> Config:
         test_roots=list(raw.get("test_roots", DEFAULT_TEST_ROOTS)),
         base_branch=raw.get("base_branch", DEFAULT_BASE_BRANCH),
         ignore=list(raw.get("ignore", DEFAULT_IGNORE)),
+        global_files=list(raw.get("global_files", DEFAULT_GLOBAL_FILES)),
     )

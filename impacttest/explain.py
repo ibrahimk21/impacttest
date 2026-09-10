@@ -26,6 +26,8 @@ class Explanation:
     self_changed: bool = False
     path: list[Path] = field(default_factory=list)
     changed_path: Path | None = None
+    fallback: bool = False
+    fallback_reason: str | None = None
 
 
 def explain_selection(
@@ -33,6 +35,8 @@ def explain_selection(
     test_name: str,
     impact: ImpactResult,
     path_by_name: dict[str, Path],
+    fallback: bool = False,
+    fallback_reason: str | None = None,
 ) -> Explanation:
     """Reconstruct why ``test_name`` was (or wasn't) selected.
 
@@ -45,9 +49,25 @@ def explain_selection(
     modules and the "ghost" nodes ``cli.run_analysis`` reconstructs for
     deleted or renamed-away modules, so a chain that bottoms out at one of
     those still renders a real path instead of a bare dotted name.
+
+    When Phase 10's full-suite fallback is active, every real test module
+    is selected regardless of the graph -- there is no dependency chain to
+    walk, only the reason the fallback fired (spec §19's fallback
+    example), so that check short-circuits before the graph is consulted
+    at all. It still comes after the "found" check: a nonexistent path is
+    a mistake worth reporting on its own, fallback or not.
     """
     if test_name not in path_by_name:
         return Explanation(test_path=test_path, found=False)
+
+    if fallback:
+        return Explanation(
+            test_path=test_path,
+            found=True,
+            selected=True,
+            fallback=True,
+            fallback_reason=fallback_reason,
+        )
 
     if test_name not in impact.impacted:
         return Explanation(test_path=test_path, found=True, selected=False)
@@ -86,6 +106,16 @@ def format_explanation(explanation: Explanation) -> str:
 
     if not explanation.selected:
         return f"{display} was not selected."
+
+    if explanation.fallback:
+        headline = (
+            f"{display} was selected because the full-suite safety fallback "
+            "was triggered."
+        )
+        lines = [headline, "", "Reason:"]
+        if explanation.fallback_reason is not None:
+            lines.append(f"  {explanation.fallback_reason}")
+        return "\n".join(lines)
 
     if explanation.self_changed:
         return f"{display} was selected because it is itself changed."
