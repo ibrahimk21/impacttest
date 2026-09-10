@@ -53,6 +53,41 @@ def get_changed_files(
     return changes
 
 
+def get_diff_start(repo_root: Path, base: str, head: str = WORKING_TREE) -> str:
+    """The revision a deleted path last existed at -- exactly the tree
+    ``get_changed_files`` diffs *from*.
+
+    Discovery only ever sees the current tree, so a module gone from disk
+    has no ``Module`` for the analyzer to read; recovering its last content
+    (to find who still depends on it, spec §10) means reading it out of
+    history instead, from this same starting point.
+    """
+    effective_head = "HEAD" if head == WORKING_TREE else head
+    return get_merge_base(repo_root, base, effective_head)
+
+
+def read_file_at_revision(repo_root: Path, revision: str, rel_path: Path) -> str | None:
+    """The text of ``rel_path`` as it existed at ``revision``, or None if
+    it didn't exist there. ``None`` is a normal outcome -- callers use this
+    to recover a deleted file's last content, and a path that never
+    existed at ``revision`` either (e.g. it was itself added and later
+    renamed away within the diff range) is simply nothing to recover.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{revision}:{rel_path.as_posix()}"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("git is not installed or not on PATH") from exc
+    except subprocess.CalledProcessError:
+        return None
+    return result.stdout
+
+
 def _add_untracked(repo_root: Path, changes: ChangeSet) -> None:
     output = _run_git(repo_root, ["ls-files", "--others", "--exclude-standard"])
     for line in output.splitlines():
