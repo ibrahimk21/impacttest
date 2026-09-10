@@ -10,8 +10,8 @@ and reports rather than guesses at. The one thing it must never do is quietly
 miss a test, so where the analysis runs out of certainty it says so.
 
 **Status.** The analysis core is implemented: repository discovery, AST import
-extraction, and module resolution. The dependency graph, impact traversal, Git
-change detection, conservative fallbacks and the CLI are not built yet. Items
+extraction, module resolution, the dependency graph, impact traversal, and Git
+change detection. Conservative fallbacks and the CLI are not built yet. Items
 below that describe fallback behavior are marked *(planned)* and state the
 intended policy, not current behavior.
 
@@ -147,6 +147,36 @@ work.
 
 Where roots nest (`["src", "."]`), a file is named by the deeper root, because
 that is the one a src layout puts on `sys.path`.
+
+---
+
+## Git change detection
+
+### Filenames with quote-worthy characters are not unescaped
+
+Git always renders a path in `diff --name-status` output verbatim, except
+when the path contains a character it considers unsafe to print raw (a
+literal tab, newline, backslash, or double quote), in which case the whole
+path is wrapped in double quotes with those characters backslash-escaped.
+`core.quotepath=false` (set on every invocation) only suppresses quoting for
+non-ASCII bytes — it has no effect on this case. Git change detection does
+not detect or unescape this quoting, so such a path would be parsed as a
+literal string containing backslashes and quote characters rather than the
+real filename, and would fail to resolve to anything.
+
+This is believed to affect zero real files in practice: the characters that
+trigger it are already invalid in a filename on Windows, and vanishingly rare
+in filenames on any platform. Unescaping it properly is a small, well-defined
+addition if it ever turns out to matter.
+
+### Copies are not detected
+
+`git diff --name-status` does not report copies (status `C`) unless run with
+`-C`, which is not passed. A copied file that Git could have paired with its
+source is instead reported as two independent changes — the source as
+unchanged (invisible to the diff) and the copy as `A` (added) — which is the
+same outcome as treating a genuine new file as added. No information is lost;
+the copy relationship just isn't surfaced.
 
 ---
 
