@@ -105,6 +105,16 @@ def test_build_parser_analyze_accepts_expected_flags():
     assert args.tests == ["tests"]
     assert args.source == ["src"]
     assert args.verbose is True
+    assert args.all_on_uncertain is True
+
+
+def test_build_parser_all_on_uncertain_defaults_true_and_can_be_disabled():
+    parser = build_parser()
+    assert parser.parse_args(["analyze"]).all_on_uncertain is True
+    assert (
+        parser.parse_args(["analyze", "--no-all-on-uncertain"]).all_on_uncertain
+        is False
+    )
 
 
 # --- run_analysis against real temporary Git repos ---
@@ -199,6 +209,95 @@ def test_rename_away_selects_stale_importer_of_the_old_name(tmp_path: Path) -> N
     assert Path("tests/test_login.py") in report.selected_tests
 
 
+# --- conservative fallback, wired through the real pipeline (Phase 10) ---
+
+
+def test_conftest_change_triggers_full_suite_fallback(tmp_path: Path) -> None:
+    repo_root = _baseline_repo(tmp_path)
+    _write(repo_root / "tests" / "conftest.py", "")
+
+    config = load_config(repo_root)
+    report = run_analysis(repo_root, config, base="main")
+
+    assert report.fallback is True
+    assert report.fallback_reason == "tests/conftest.py changed"
+    assert set(report.selected_tests) == {
+        Path("tests/test_login.py"),
+        Path("tests/test_unrelated.py"),
+    }
+
+
+def test_uncertain_module_triggers_fallback_by_default(tmp_path: Path) -> None:
+    repo_root = _baseline_repo(tmp_path)
+    _write(
+        repo_root / "src" / "app" / "login.py",
+        "import importlib\n"
+        "crypto = importlib.import_module('app.crypto')\n\n"
+        "def login():\n    return crypto.hash('x')\n",
+    )
+
+    config = load_config(repo_root)
+    report = run_analysis(repo_root, config, base="main")
+
+    assert report.fallback is True
+    assert "app.login" in (report.fallback_reason or "")
+    assert set(report.selected_tests) == {
+        Path("tests/test_login.py"),
+        Path("tests/test_unrelated.py"),
+    }
+
+
+def test_all_on_uncertain_false_disables_the_uncertain_fallback(
+    tmp_path: Path,
+) -> None:
+    repo_root = _baseline_repo(tmp_path)
+    _write(
+        repo_root / "src" / "app" / "login.py",
+        "import importlib\n"
+        "crypto = importlib.import_module('app.crypto')\n\n"
+        "def login():\n    return crypto.hash('x')\n",
+    )
+
+    config = load_config(repo_root)
+    report = run_analysis(repo_root, config, base="main", all_on_uncertain=False)
+
+    assert report.fallback is False
+    # Direct dependency selection still runs normally -- disabling the
+    # uncertainty fallback doesn't disable the graph traversal itself.
+    assert report.selected_tests == [Path("tests/test_login.py")]
+
+
+def test_analysis_failure_anywhere_triggers_fallback(tmp_path: Path) -> None:
+    repo_root = _baseline_repo(tmp_path)
+    _write(repo_root / "src" / "app" / "broken.py", "def broken(:\n")
+
+    config = load_config(repo_root)
+    report = run_analysis(repo_root, config, base="main")
+
+    assert report.fallback is True
+    assert "broken.py" in (report.fallback_reason or "")
+    assert set(report.selected_tests) == {
+        Path("tests/test_login.py"),
+        Path("tests/test_unrelated.py"),
+    }
+
+
+def test_fallback_selects_the_full_suite_not_an_empty_list(tmp_path: Path) -> None:
+    # A change with zero test dependents would normally select nothing --
+    # fallback must still produce every test file, not leave the (empty)
+    # normal selection in place, since an empty selection means something
+    # different to both format_report and the runner.
+    repo_root = _baseline_repo(tmp_path)
+    _write(repo_root / "src" / "app" / "orphan.py", "x = 1\n")
+    _write(repo_root / "pytest.ini", "[pytest]\n")
+
+    config = load_config(repo_root)
+    report = run_analysis(repo_root, config, base="main")
+
+    assert report.fallback is True
+    assert len(report.selected_tests) == report.total_tests == 2
+
+
 # --- explain, wired through the real pipeline (Phase 9) ---
 
 
@@ -207,7 +306,12 @@ def _explain(config, report: AnalysisReport, test_rel_path: str) -> str:
     test_name = module_name_for_path(test_path, config)
     assert test_name is not None
     explanation = explain_selection(
-        test_path, test_name, report.impact, report.path_by_name
+        test_path,
+        test_name,
+        report.impact,
+        report.path_by_name,
+        fallback=report.fallback,
+        fallback_reason=report.fallback_reason,
     )
     return format_explanation(explanation)
 
@@ -261,6 +365,25 @@ def test_explain_unrelated_test_reports_not_selected(tmp_path: Path) -> None:
     text = _explain(config, report, "tests/test_unrelated.py")
 
     assert text == "tests/test_unrelated.py was not selected."
+
+
+def test_explain_reports_fallback_reason_matching_spec_example(
+    tmp_path: Path,
+) -> None:
+    repo_root = _baseline_repo(tmp_path)
+    _write(repo_root / "tests" / "conftest.py", "")
+    config = load_config(repo_root)
+    report = run_analysis(repo_root, config, base="main")
+
+    text = _explain(config, report, "tests/test_unrelated.py")
+
+    assert text == (
+        "tests/test_unrelated.py was selected because the full-suite safety "
+        "fallback was triggered.\n"
+        "\n"
+        "Reason:\n"
+        "  tests/conftest.py changed"
+    )
 
 
 def test_full_report_against_this_repository() -> None:

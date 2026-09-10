@@ -25,6 +25,7 @@ def test_partial_config_defaults_only_missing_keys(tmp_path: Path) -> None:
     assert cfg.test_roots == Config().test_roots
     assert cfg.base_branch == Config().base_branch
     assert cfg.ignore == Config().ignore
+    assert cfg.global_files == Config().global_files
 
 
 def test_full_explicit_config_is_respected(tmp_path: Path) -> None:
@@ -35,6 +36,7 @@ source_roots = ["lib"]
 test_roots = ["spec"]
 base_branch = "develop"
 ignore = ["vendor/**"]
+global_files = ["shared/fixtures.py"]
 """,
         encoding="utf-8",
     )
@@ -44,4 +46,9 @@ ignore = ["vendor/**"]
         test_roots=["spec"],
         base_branch="develop",
         ignore=["vendor/**"],
+        global_files=["shared/fixtures.py"],
     )
+
+
+def test_global_files_defaults_to_empty_list() -> None:
+    assert Config().global_files == []

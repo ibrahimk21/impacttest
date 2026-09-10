@@ -87,6 +87,59 @@ def test_chain_falls_back_to_the_ghost_path_for_a_deleted_changed_module():
     assert result.changed_path == Path("app/crypto.py")
 
 
+# --- explain_selection / format_explanation: fallback (Phase 10, spec §19) ---
+
+
+def test_fallback_short_circuits_before_the_graph_is_consulted():
+    # An empty ImpactResult would normally mean "not selected" -- fallback
+    # must override that, since every real test is selected regardless.
+    impact = ImpactResult()
+    path_by_name = _paths("tests.test_a")
+    result = explain_selection(
+        Path("tests/test_a.py"),
+        "tests.test_a",
+        impact,
+        path_by_name,
+        fallback=True,
+        fallback_reason="tests/conftest.py changed",
+    )
+    assert result.found is True
+    assert result.selected is True
+    assert result.fallback is True
+    assert result.fallback_reason == "tests/conftest.py changed"
+
+
+def test_fallback_does_not_override_not_found():
+    impact = ImpactResult()
+    result = explain_selection(
+        Path("tests/test_missing.py"),
+        "tests.test_missing",
+        impact,
+        _paths("tests.test_a"),
+        fallback=True,
+        fallback_reason="pytest.ini changed",
+    )
+    assert result.found is False
+
+
+def test_format_fallback_matches_spec_example():
+    explanation = Explanation(
+        test_path=Path("tests/test_checkout.py"),
+        found=True,
+        selected=True,
+        fallback=True,
+        fallback_reason="tests/conftest.py changed",
+    )
+    text = format_explanation(explanation)
+    assert text == (
+        "tests/test_checkout.py was selected because the full-suite safety "
+        "fallback was triggered.\n"
+        "\n"
+        "Reason:\n"
+        "  tests/conftest.py changed"
+    )
+
+
 # --- format_explanation: pure rendering, ASCII-only ---
 
 
