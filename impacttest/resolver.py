@@ -179,8 +179,17 @@ def _known_ancestors(name: str, index: ModuleIndex) -> list[str]:
 
 def _resolve_target(
     target: str, names: tuple[str, ...], index: ModuleIndex
-) -> tuple[str, ...]:
-    """Every internal module a statement aimed at ``target`` touches.
+) -> tuple[tuple[str, ...], bool]:
+    """Every internal module a statement aimed at ``target`` touches, and
+    whether the statement actually found what it was aiming at.
+
+    The second half of that matters because the two are not the same. An
+    unresolvable ``import app.missing`` still yields an edge to ``app``;
+    having produced edges is not evidence of having resolved. Anything
+    the names reach counts as a hit, though -- ``from app import auth``
+    finds ``app.auth`` whether or not ``app`` itself has an
+    ``__init__.py``, and a package directory that ships no initializer
+    has no initializer to depend on.
 
     ``from app import users`` is ambiguous on its face: ``users`` may be
     a submodule ``app/users.py`` or an attribute defined in
@@ -205,17 +214,20 @@ def _resolve_target(
     means we never needed to know which names it pulled in (spec §24).
     """
     found: list[str] = _known_ancestors(target, index) if target else []
-    if target and target in index:
+    hit = bool(target) and target in index
+    if hit:
         found.append(target)
 
     for name in names:
         if name == "*":
             continue
         candidate = _join(target, name)
-        if candidate in index and candidate not in found:
-            found.append(candidate)
+        if candidate in index:
+            hit = True
+            if candidate not in found:
+                found.append(candidate)
 
-    return tuple(found)
+    return tuple(found), hit
 
 
 def resolve_import(
@@ -231,6 +243,12 @@ def resolve_import(
     prefix of it -- is third-party or stdlib and is dropped, edgeless and
     without complaint (spec §11). Dropping is the expected outcome for
     most imports in a real repository, not a failure.
+
+    What is *not* allowed is a guess. An import aimed at a name this
+    repository partly owns but does not provide, or at a name two files
+    both provide, is reported uncertain -- Phase 10 turns that into a
+    full-suite run, which is expensive and correct, where a guess is
+    cheap and occasionally silently wrong.
 
     A relative import needs the importer's own position first: ``from
     .users import User`` means nothing in isolation, and only becomes
@@ -258,15 +276,9 @@ def resolve_import(
             return Resolution()
         target = imp.module
 
-    modules = _resolve_target(target, imp.names, index)
+    modules, resolved = _resolve_target(target, imp.names, index)
 
-    # Whether the statement found what it was aiming at -- not the same
-    # as having produced edges, since an unresolvable "from .missing
-    # import x" still yields an edge to its package. "from .. import x"
-    # names no target of its own, so there the names are the aim.
-    resolved = target in index if target else bool(modules)
-
-    if imp.level and not resolved:
+    if not resolved and imp.level:
         # "from . import nope" has no module of its own to name in the
         # message, so fall back to the imported names.
         sought = target or " / ".join(n for n in imp.names if n != "*")
@@ -279,4 +291,95 @@ def resolve_import(
             ),
         )
 
+    if not resolved and modules:
+        # Absolute, and part of the name is ours: "import app.missing"
+        # where app is a package of ours but nothing provides
+        # app/missing.py. A dotted name in an import statement has to be
+        # a module, so this is not the harmless attribute case -- it is a
+        # module we failed to find, and the edges we do have may be
+        # incomplete.
+        return Resolution(
+            modules=modules,
+            uncertain=True,
+            reason=(
+                f"'{target}' is imported by '{importer.name}' and looks "
+                "internal, but no file in this repository provides it"
+            ),
+        )
+
+    contested = [name for name in modules if name in index.ambiguous]
+    if contested:
+        return Resolution(
+            modules=modules,
+            uncertain=True,
+            reason=(
+                f"'{contested[0]}' is provided by more than one file, so the "
+                "graph cannot tell which one this import means"
+            ),
+        )
+
     return Resolution(modules=modules)
+
+
+@dataclass(frozen=True)
+class ResolvedModule:
+    """One module with its internal dependencies resolved."""
+
+    name: str
+    path: Path
+    is_test: bool = False
+    depends_on: tuple[str, ...] = ()
+    uncertain: bool = False
+    reasons: tuple[str, ...] = ()
+
+
+def resolve_module(module: Module, index: ModuleIndex) -> ResolvedModule:
+    """Resolve every import in one module into a dependency set.
+
+    Uncertainty accumulates rather than being decided per statement: the
+    module is uncertain if any of its imports could not be resolved, or
+    if the analyzer already flagged it for a dynamic-import construct in
+    Phase 2. Both kinds mean the same thing downstream -- this module's
+    dependency list may be incomplete -- and both carry a reason string
+    so the fallback can say why it fired (spec §19).
+
+    Self-dependencies are dropped. A package initializer that does "from
+    . import thing" resolves partly to its own package, which is true and
+    useless: it would add a self-loop to every such node and a pointless
+    hop to every explanation path.
+    """
+    depends: set[str] = set()
+    reasons: list[str] = []
+    uncertain = module.uncertain
+
+    if module.uncertain:
+        reasons.append(
+            f"'{module.name}' uses a dynamic import construct, so its "
+            "dependencies cannot be read statically"
+        )
+
+    for imp in module.imports:
+        resolution = resolve_import(imp, module, index)
+        depends.update(resolution.modules)
+        if resolution.uncertain:
+            uncertain = True
+            if resolution.reason and resolution.reason not in reasons:
+                reasons.append(resolution.reason)
+
+    depends.discard(module.name)
+
+    return ResolvedModule(
+        name=module.name,
+        path=module.path,
+        is_test=module.is_test,
+        depends_on=tuple(sorted(depends)),
+        uncertain=uncertain,
+        reasons=tuple(reasons),
+    )
+
+
+def resolve_all(
+    modules: Iterable[Module], index: ModuleIndex
+) -> list[ResolvedModule]:
+    """Resolve a whole repository, in the order given."""
+    return [resolve_module(module, index) for module in modules]
