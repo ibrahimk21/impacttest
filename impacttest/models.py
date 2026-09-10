@@ -35,12 +35,20 @@ class Module:
 
 @dataclass
 class ChangeSet:
-    """Files changed between a base revision and HEAD (Phase 6, spec §10)."""
+    """Files changed between a base revision and HEAD (Phase 6, spec §10).
+
+    ``added``/``modified``/``deleted``/``renamed`` hold only ``.py`` paths --
+    the ones that feed the resolver and dependency graph. Everything else
+    that changed (``pyproject.toml``, ``pytest.ini``, and the like) goes into
+    ``non_python`` instead: it can never produce a graph edge, but Phase 10's
+    global-file fallback still needs to know it changed.
+    """
 
     added: list[Path] = field(default_factory=list)
     modified: list[Path] = field(default_factory=list)
     deleted: list[Path] = field(default_factory=list)
     renamed: list[tuple[Path, Path]] = field(default_factory=list)
+    non_python: list[Path] = field(default_factory=list)
 
 
 @dataclass
