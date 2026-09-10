@@ -44,6 +44,7 @@ module = [
     "test_cli",
     "test_config",
     "test_discovery",
+    "test_explain",
     "test_git",
     "test_graph",
     "test_impact",

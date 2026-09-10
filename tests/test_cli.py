@@ -3,6 +3,8 @@ from pathlib import Path
 
 from impacttest.cli import AnalysisReport, build_parser, format_report, run_analysis
 from impacttest.config import load_config
+from impacttest.explain import explain_selection, format_explanation
+from impacttest.resolver import module_name_for_path
 
 
 def _git(root: Path, *args: str) -> None:
@@ -195,6 +197,70 @@ def test_rename_away_selects_stale_importer_of_the_old_name(tmp_path: Path) -> N
     report = run_analysis(repo_root, config, base="main")
 
     assert Path("tests/test_login.py") in report.selected_tests
+
+
+# --- explain, wired through the real pipeline (Phase 9) ---
+
+
+def _explain(config, report: AnalysisReport, test_rel_path: str) -> str:
+    test_path = Path(test_rel_path)
+    test_name = module_name_for_path(test_path, config)
+    assert test_name is not None
+    explanation = explain_selection(
+        test_path, test_name, report.impact, report.path_by_name
+    )
+    return format_explanation(explanation)
+
+
+def test_explain_reconstructs_the_full_chain_to_the_changed_module(
+    tmp_path: Path,
+) -> None:
+    # tests.test_login -> app.login -> app.crypto: a real 2-hop chain,
+    # exercised through run_analysis exactly as the CLI would.
+    repo_root = _baseline_repo(tmp_path)
+    _write(
+        repo_root / "src" / "app" / "crypto.py", "def hash(x):\n    return x[::-1]\n"
+    )
+    config = load_config(repo_root)
+    report = run_analysis(repo_root, config, base="main")
+
+    text = _explain(config, report, "tests/test_login.py")
+
+    assert text == (
+        "tests/test_login.py\n"
+        "    imports src/app/login.py\n"
+        "        imports src/app/crypto.py\n"
+        "\n"
+        "Changed module:\n"
+        "    src/app/crypto.py"
+    )
+
+
+def test_explain_changed_test_file_reports_itself_changed(tmp_path: Path) -> None:
+    repo_root = _baseline_repo(tmp_path)
+    _write(
+        repo_root / "tests" / "test_unrelated.py",
+        "def test_unrelated():\n    assert False\n",
+    )
+    config = load_config(repo_root)
+    report = run_analysis(repo_root, config, base="main")
+
+    text = _explain(config, report, "tests/test_unrelated.py")
+
+    assert text == "tests/test_unrelated.py was selected because it is itself changed."
+
+
+def test_explain_unrelated_test_reports_not_selected(tmp_path: Path) -> None:
+    repo_root = _baseline_repo(tmp_path)
+    _write(
+        repo_root / "src" / "app" / "crypto.py", "def hash(x):\n    return x[::-1]\n"
+    )
+    config = load_config(repo_root)
+    report = run_analysis(repo_root, config, base="main")
+
+    text = _explain(config, report, "tests/test_unrelated.py")
+
+    assert text == "tests/test_unrelated.py was not selected."
 
 
 def test_full_report_against_this_repository() -> None:
