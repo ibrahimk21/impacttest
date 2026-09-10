@@ -157,6 +157,26 @@ def _relative_base(importer: Module, level: int) -> str | None:
     return ".".join(parts[: len(parts) - ascend])
 
 
+def _known_ancestors(name: str, index: ModuleIndex) -> list[str]:
+    """The proper prefixes of ``name`` that are modules in this repo,
+    outermost first: ``app.sub.mod`` -> ``["app", "app.sub"]``.
+
+    Importing a submodule imports its parents on the way in -- reaching
+    ``app.sub.mod`` executes ``app/__init__.py``, then
+    ``app/sub/__init__.py``. Those are real dependencies of the importer,
+    so they are real edges.
+
+    They also decide the difference between "external" and "broken".
+    ``numpy.linalg`` has no prefix in the table, so the whole import
+    belongs to the environment and is dropped. ``app.missing`` has
+    ``app`` in the table, so the import is aimed at our own code and
+    landed nowhere -- something we should not quietly ignore.
+    """
+    parts = name.split(".")
+    prefixes = (".".join(parts[:i]) for i in range(1, len(parts)))
+    return [prefix for prefix in prefixes if prefix in index]
+
+
 def _resolve_target(
     target: str, names: tuple[str, ...], index: ModuleIndex
 ) -> tuple[str, ...]:
@@ -184,7 +204,7 @@ def _resolve_target(
     not a name that could be a submodule, and module-level granularity
     means we never needed to know which names it pulled in (spec §24).
     """
-    found: list[str] = []
+    found: list[str] = _known_ancestors(target, index) if target else []
     if target and target in index:
         found.append(target)
 
@@ -206,8 +226,11 @@ def resolve_import(
 
     An absolute import is a table lookup: ``from app.users import User``
     written anywhere resolves to ``app.users`` if that name is indexed.
-    The lookup is what filters out the environment -- ``import numpy``
-    finds nothing internal and contributes no edge (spec §11).
+    The lookup is what filters out the environment: an import with no
+    internal name anywhere in it -- not the full dotted path, not any
+    prefix of it -- is third-party or stdlib and is dropped, edgeless and
+    without complaint (spec §11). Dropping is the expected outcome for
+    most imports in a real repository, not a failure.
 
     A relative import needs the importer's own position first: ``from
     .users import User`` means nothing in isolation, and only becomes
@@ -236,18 +259,24 @@ def resolve_import(
         target = imp.module
 
     modules = _resolve_target(target, imp.names, index)
-    if modules:
-        return Resolution(modules=modules)
 
-    if imp.level:
+    # Whether the statement found what it was aiming at -- not the same
+    # as having produced edges, since an unresolvable "from .missing
+    # import x" still yields an edge to its package. "from .. import x"
+    # names no target of its own, so there the names are the aim.
+    resolved = target in index if target else bool(modules)
+
+    if imp.level and not resolved:
         # "from . import nope" has no module of its own to name in the
         # message, so fall back to the imported names.
         sought = target or " / ".join(n for n in imp.names if n != "*")
         return Resolution(
+            modules=modules,
             uncertain=True,
             reason=(
                 f"relative import in '{importer.name}' does not resolve to a "
                 f"known module (looked for '{sought}')"
             ),
         )
-    return Resolution()
+
+    return Resolution(modules=modules)
