@@ -20,6 +20,7 @@ from impacttest.graph import build_graph
 from impacttest.impact import compute_impact
 from impacttest.models import ChangeSet, Module
 from impacttest.resolver import build_index, module_name_for_path, resolve_all
+from impacttest.runner import run_selected_tests
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,7 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_analysis_arguments(analyze_parser)
 
-    subparsers.add_parser("run", help="Run only the tests affected by changes.")
+    run_parser = subparsers.add_parser(
+        "run", help="Run only the tests affected by changes."
+    )
+    _add_analysis_arguments(run_parser)
+
     subparsers.add_parser("explain", help="Explain why a test was selected.")
     return parser
 
@@ -240,21 +245,25 @@ def format_report(report: AnalysisReport, verbose: bool = False) -> str:
     return "\n".join(lines)
 
 
-def _cmd_analyze(args: argparse.Namespace) -> int:
-    try:
-        repo_root = find_repo_root(Path(args.root))
-    except RuntimeError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
+def _prepare(args: argparse.Namespace) -> tuple[Path, Config, str]:
+    """Resolve the repo root and config shared by ``analyze`` and ``run``,
+    applying any ``--source``/``--tests``/``--base`` overrides. Raises
+    RuntimeError (from ``find_repo_root``) if ``--root`` isn't inside a Git
+    repository -- callers turn that into a clean error message.
+    """
+    repo_root = find_repo_root(Path(args.root))
     config = load_config(repo_root)
     if args.source:
         config.source_roots = args.source
     if args.tests:
         config.test_roots = args.tests
     base = args.base or config.base_branch
+    return repo_root, config, base
 
+
+def _cmd_analyze(args: argparse.Namespace) -> int:
     try:
+        repo_root, config, base = _prepare(args)
         report = run_analysis(repo_root, config, base=base, head=args.head)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -262,6 +271,17 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
 
     print(format_report(report, verbose=args.verbose))
     return 0
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    try:
+        repo_root, config, base = _prepare(args)
+        report = run_analysis(repo_root, config, base=base, head=args.head)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    return run_selected_tests(repo_root, report.selected_tests)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -274,6 +294,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "analyze":
         return _cmd_analyze(args)
+    if args.command == "run":
+        return _cmd_run(args)
 
     print(f"impacttest {args.command}: not implemented yet.")
     return 0
