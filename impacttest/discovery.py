@@ -1,4 +1,5 @@
 """Repository root, source/test file discovery, test-file classification (Phase 1)."""
+
 from __future__ import annotations
 
 import fnmatch
@@ -40,7 +41,7 @@ def path_to_module_name(rel_path: Path, root: str) -> str | None:
 
     if parts[: len(root_parts)] != root_parts:
         return None
-    remainder = parts[len(root_parts):]
+    remainder = parts[len(root_parts) :]
 
     if not remainder or not remainder[-1].endswith(".py"):
         return None

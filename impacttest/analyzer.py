@@ -1,4 +1,5 @@
 """AST parsing and raw import extraction (Phase 2, spec §11)."""
+
 from __future__ import annotations
 
 import ast
@@ -46,7 +47,9 @@ class _ImportVisitor(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         names = tuple(alias.name for alias in node.names)
-        self.imports.append(RawImport(module=node.module, level=node.level, names=names))
+        self.imports.append(
+            RawImport(module=node.module, level=node.level, names=names)
+        )
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:

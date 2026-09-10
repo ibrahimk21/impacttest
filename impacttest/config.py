@@ -1,4 +1,5 @@
 """Load [tool.impacttest] configuration from pyproject.toml (Phase 1, spec §21)."""
+
 from __future__ import annotations
 
 import sys

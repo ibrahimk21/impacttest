@@ -22,7 +22,7 @@ intended policy, not current behavior.
 ### Dynamic imports
 
 ```python
-importlib.import_module(name)   # name is a runtime value
+importlib.import_module(name)  # name is a runtime value
 __import__(module_name)
 exec(source)
 eval(expression)

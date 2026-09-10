@@ -272,6 +272,7 @@ def test_relative_import_escaping_the_source_root_is_uncertain():
 
     assert resolved.modules == ()
     assert resolved.uncertain
+    assert resolved.reason is not None
     assert "above the source root" in resolved.reason
 
 
@@ -334,6 +335,7 @@ def test_absolute_import_of_a_missing_internal_module_is_uncertain():
 
     assert resolved.modules == ("app",)
     assert resolved.uncertain
+    assert resolved.reason is not None
     assert "no file in this repository provides it" in resolved.reason
 
 

@@ -69,9 +69,7 @@ class Loader:
         from shop.utils import helper
 """
     )
-    assert imports == [
-        RawImport(module="shop.utils", level=0, names=("helper",))
-    ]
+    assert imports == [RawImport(module="shop.utils", level=0, names=("helper",))]
 
 
 def test_conditional_type_checking_import_is_included():

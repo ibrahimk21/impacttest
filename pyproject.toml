@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.16", "mypy>=2"]
 
 [project.scripts]
 impacttest = "impacttest.cli:main"
@@ -22,6 +22,33 @@ include = ["impacttest*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+
+# tests/ has no __init__.py, so mypy sees each file as a top-level module
+# (test_resolver, not tests.test_resolver) -- listed by name rather than
+# "tests.*", which never matches. Add a new test file's name here too.
+#
+# Test functions don't need "-> None" on every def to be worth checking --
+# check_untyped_defs alone still type-checks their bodies (the actual
+# assertions), which is where a real bug would show up.
+[[tool.mypy.overrides]]
+module = [
+    "test_analyzer",
+    "test_config",
+    "test_discovery",
+    "test_resolver",
+    "test_smoke",
+]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
 
 [tool.impacttest]
 # "." because this repo is a flat layout: impacttest/ sits directly under

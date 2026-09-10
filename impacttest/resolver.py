@@ -1,4 +1,5 @@
 """Resolve import statements to internal module names (Phase 3, spec §12)."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -225,9 +226,7 @@ def _resolve_target(
     return tuple(found), hit
 
 
-def resolve_import(
-    imp: RawImport, importer: Module, index: ModuleIndex
-) -> Resolution:
+def resolve_import(imp: RawImport, importer: Module, index: ModuleIndex) -> Resolution:
     """Resolve one import statement, as written in ``importer``, against
     the repository's module table.
 
@@ -373,8 +372,6 @@ def resolve_module(module: Module, index: ModuleIndex) -> ResolvedModule:
     )
 
 
-def resolve_all(
-    modules: Iterable[Module], index: ModuleIndex
-) -> list[ResolvedModule]:
+def resolve_all(modules: Iterable[Module], index: ModuleIndex) -> list[ResolvedModule]:
     """Resolve a whole repository, in the order given."""
     return [resolve_module(module, index) for module in modules]

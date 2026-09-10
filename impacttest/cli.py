@@ -1,4 +1,5 @@
 """Command-line entry point (spec §7)."""
+
 import argparse
 import sys
 
