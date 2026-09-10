@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 
 from impacttest.config import Config
 from impacttest.discovery import path_to_module_name
-from impacttest.models import Module
+from impacttest.models import Module, RawImport
 
 
 def _root_depth(root: str) -> int:
@@ -103,3 +103,47 @@ def build_index(modules: Iterable[Module]) -> ModuleIndex:
             continue
         index.by_name[module.name] = module.path
     return index
+
+
+@dataclass(frozen=True)
+class Resolution:
+    """What one import statement resolved to.
+
+    ``modules`` are the internal module names the statement depends on --
+    empty when the import is external, which is the common case and not
+    an error. ``uncertain`` means the statement looks internal but could
+    not be resolved confidently; Phase 10 escalates that to a full-suite
+    run, so it is a safe answer rather than a wrong one, but an expensive
+    one to hand out carelessly.
+    """
+
+    modules: tuple[str, ...] = ()
+    uncertain: bool = False
+    reason: str | None = None
+
+
+def resolve_import(
+    imp: RawImport, importer: Module, index: ModuleIndex
+) -> Resolution:
+    """Resolve one import statement, as written in ``importer``, against
+    the repository's module table.
+
+    An absolute import is a table lookup: ``from app.users import User``
+    written anywhere resolves to ``app.users`` if that name is indexed.
+    The lookup is what filters out the environment -- ``import numpy``
+    finds nothing internal and contributes no edge (spec §11).
+    """
+    if imp.level:
+        return Resolution(
+            uncertain=True, reason="relative imports are not resolved yet"
+        )
+
+    # Only a relative import can omit the module ("from . import x"), so
+    # at level 0 this is unreachable in practice; treat it as external
+    # rather than crashing on a shape we did not anticipate.
+    if imp.module is None:
+        return Resolution()
+
+    if imp.module in index:
+        return Resolution(modules=(imp.module,))
+    return Resolution()
