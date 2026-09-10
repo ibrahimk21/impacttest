@@ -1,10 +1,13 @@
 """Resolve import statements to internal module names (Phase 3, spec §12)."""
 from __future__ import annotations
 
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from impacttest.config import Config
 from impacttest.discovery import path_to_module_name
+from impacttest.models import Module
 
 
 def _root_depth(root: str) -> int:
@@ -49,3 +52,54 @@ def module_name_for_path(rel_path: Path, config: Config) -> str | None:
         return path_to_module_name(rel_path, ".")
 
     return None
+
+
+@dataclass
+class ModuleIndex:
+    """The lookup that decides what "internal" means.
+
+    ``by_name`` maps every module name discovered in the repository to
+    its file, including packages: ``src/app/__init__.py`` is indexed
+    under ``app``, so ``from app import User`` has something to resolve
+    to even when ``User`` is only a name re-exported by the package
+    initializer (spec §24).
+
+    Membership in ``by_name`` is the entire definition of an internal
+    module. An import that lands in here becomes a graph edge; one that
+    does not is third-party or stdlib and gets dropped (spec §11). There
+    is no separate list of external packages to maintain, and no attempt
+    to consult the installed environment -- what is in the repository is
+    what counts.
+
+    ``ambiguous`` holds names that two or more files both claim (two
+    source roots each containing an ``app/auth.py``, say). The graph has
+    one node per name, so those files share a node; resolving to such a
+    name still produces the edge, but is reported as uncertain rather
+    than silently picking a winner.
+    """
+
+    by_name: dict[str, Path] = field(default_factory=dict)
+    by_path: dict[Path, str] = field(default_factory=dict)
+    ambiguous: set[str] = field(default_factory=set)
+
+    def __contains__(self, name: object) -> bool:
+        return name in self.by_name
+
+
+def build_index(modules: Iterable[Module]) -> ModuleIndex:
+    """Index discovered modules by name and by path.
+
+    When two files claim one name the lower path wins the ``by_name``
+    slot -- an arbitrary but deterministic choice, so that two runs over
+    an unchanged repository never disagree about the graph. The name is
+    recorded in ``ambiguous`` so the resolver can flag it instead of
+    trusting the coin flip.
+    """
+    index = ModuleIndex()
+    for module in sorted(modules, key=lambda m: m.path.as_posix()):
+        index.by_path[module.path] = module.name
+        if module.name in index.by_name:
+            index.ambiguous.add(module.name)
+            continue
+        index.by_name[module.name] = module.path
+    return index
