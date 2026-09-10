@@ -43,6 +43,7 @@ module = [
     "test_analyzer",
     "test_config",
     "test_discovery",
+    "test_graph",
     "test_resolver",
     "test_smoke",
 ]
