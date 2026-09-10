@@ -1,7 +1,13 @@
 import subprocess
 from pathlib import Path
 
-from impacttest.git import get_changed_files, normalize_git_path, parse_name_status
+from impacttest.git import (
+    get_changed_files,
+    get_diff_start,
+    normalize_git_path,
+    parse_name_status,
+    read_file_at_revision,
+)
 
 
 def _git(root: Path, *args: str) -> None:
@@ -183,3 +189,67 @@ def test_get_changed_files_uses_merge_base_not_base_tip(tmp_path: Path) -> None:
     changes = get_changed_files(tmp_path, base="main")
 
     assert changes.added == [Path("src/feature_only.py")]
+
+
+# --- reading deleted files back out of history ---
+
+
+def test_get_diff_start_is_the_merge_base_for_working_tree(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path / "src" / "app.py", "x = 1\n")
+    base_sha = _commit(tmp_path, "baseline")
+    _git(tmp_path, "branch", "-q", "-m", "main")
+
+    _write(tmp_path / "src" / "app.py", "x = 2\n")  # uncommitted
+
+    assert get_diff_start(tmp_path, base="main") == base_sha
+
+
+def test_get_diff_start_for_a_fixed_head_uses_merge_base_of_both(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path / "src" / "app.py", "x = 1\n")
+    base_sha = _commit(tmp_path, "baseline")
+    _git(tmp_path, "branch", "-q", "-m", "main")
+
+    # A separate branch, so head_sha genuinely diverges from main instead
+    # of just being main's new tip.
+    _git(tmp_path, "checkout", "-q", "-b", "feature")
+    _write(tmp_path / "src" / "app.py", "x = 2\n")
+    head_sha = _commit(tmp_path, "change")
+
+    assert get_diff_start(tmp_path, base="main", head=head_sha) == base_sha
+
+
+def test_read_file_at_revision_returns_content_that_existed_there(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path / "src" / "app.py", "x = 1\n")
+    base_sha = _commit(tmp_path, "baseline")
+
+    assert read_file_at_revision(tmp_path, base_sha, Path("src/app.py")) == "x = 1\n"
+
+
+def test_read_file_at_revision_returns_none_for_a_path_that_never_existed_there(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path / "src" / "app.py", "x = 1\n")
+    base_sha = _commit(tmp_path, "baseline")
+
+    assert read_file_at_revision(tmp_path, base_sha, Path("src/missing.py")) is None
+
+
+def test_read_file_at_revision_recovers_a_deleted_files_last_content(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path / "src" / "app.py", "x = 1\n")
+    base_sha = _commit(tmp_path, "baseline")
+
+    (tmp_path / "src" / "app.py").unlink()
+    _commit(tmp_path, "delete app.py")
+
+    assert read_file_at_revision(tmp_path, base_sha, Path("src/app.py")) == "x = 1\n"

@@ -41,6 +41,7 @@ strict = true
 [[tool.mypy.overrides]]
 module = [
     "test_analyzer",
+    "test_cli",
     "test_config",
     "test_discovery",
     "test_git",
