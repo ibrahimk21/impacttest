@@ -426,3 +426,84 @@ def test_a_module_of_only_external_imports_has_no_dependencies():
 
     assert resolved.depends_on == ("app", "app.users")
     assert not resolved.uncertain
+
+
+# --- submodule vs attribute ----------------------------------------------
+
+
+def test_the_same_statement_resolves_both_ways_by_what_exists_on_disk():
+    # "from app import users" is ambiguous on its face. Only the module
+    # table can say whether users is app/users.py or a name defined in
+    # app/__init__.py, and it answers both ways for identical source.
+    statement = RawImport("app", 0, ("users",))
+    importer = _module("src/app/auth.py", "app.auth")
+
+    submodule = _index(("src/app/__init__.py", "app"), ("src/app/users.py", "app.users"))
+    attribute = _index(("src/app/__init__.py", "app"))
+
+    assert resolve_import(statement, importer, submodule).modules == ("app", "app.users")
+    assert resolve_import(statement, importer, attribute).modules == ("app",)
+
+
+def test_a_submodule_import_keeps_the_package_edge_too():
+    # Reaching app.users executes app/__init__.py first -- that is how the
+    # import system works, not a guess -- so a change to the initializer
+    # can break this importer. Dropping that edge would drop a real test.
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(RawImport("app", 0, ("users",)), importer, _package_index())
+
+    assert "app" in resolved.modules
+
+
+def test_one_statement_can_name_a_submodule_and_an_attribute_at_once():
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(
+        RawImport("app", 0, ("users", "VERSION")), importer, _package_index()
+    )
+
+    assert resolved.modules == ("app", "app.users")
+    assert not resolved.uncertain
+
+
+def test_plain_dotted_import_pulls_in_its_parent_packages():
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(RawImport("app.sub.deep", 0, ()), importer, _package_index())
+
+    assert resolved.modules == ("app", "app.sub", "app.sub.deep")
+
+
+def test_from_import_of_a_nested_submodule():
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(
+        RawImport("app.sub", 0, ("deep",)), importer, _package_index()
+    )
+
+    assert resolved.modules == ("app", "app.sub", "app.sub.deep")
+
+
+def test_star_import_depends_on_the_module_only():
+    # "*" cannot name a submodule, and module-level granularity never
+    # needed to know which names it pulled in (spec §24).
+    importer = _module("src/app/auth.py", "app.auth")
+
+    resolved = resolve_import(RawImport("app.users", 0, ("*",)), importer, _package_index())
+
+    assert resolved.modules == ("app", "app.users")
+
+
+def test_submodule_found_through_a_package_with_no_initializer():
+    # PEP 420 namespace package: app/ has no __init__.py, so "app" is not
+    # in the table. The statement still found app.auth, which is what it
+    # was after -- and a directory with no initializer has no initializer
+    # to depend on, so there is nothing missing to flag.
+    index = _index(("src/app/auth.py", "app.auth"))
+    importer = _module("src/app/other.py", "app.other")
+
+    resolved = resolve_import(RawImport("app", 0, ("auth",)), importer, index)
+
+    assert resolved.modules == ("app.auth",)
+    assert not resolved.uncertain
